@@ -151,6 +151,14 @@ async function sendInteractiveButtonMessage(to, headerText, bodyText, buttons) {
 // Send a template message (useful for testing)
 async function sendTemplateMessage(to, templateName, languageCode = 'en_US') {
   try {
+    console.log('Sending template message:', {
+      to,
+      templateName,
+      languageCode,
+      phoneNumberId: PHONE_NUMBER_ID,
+      apiVersion: API_VERSION
+    });
+
     const response = await axios({
       method: 'POST',
       url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
@@ -170,10 +178,21 @@ async function sendTemplateMessage(to, templateName, languageCode = 'en_US') {
         }
       }
     });
+    console.log('Template message sent successfully:', response.data);
     return response.data;
   } catch (error) {
-    console.error('Error sending template message:', error.response?.data || error.message);
-    throw error;
+    console.error('Error sending template message:');
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+      throw new Error(`WhatsApp API Error: ${JSON.stringify(error.response.data)}`);
+    } else if (error.request) {
+      console.error('No response received:', error.request);
+      throw new Error('No response received from WhatsApp API');
+    } else {
+      console.error('Error setting up request:', error.message);
+      throw error;
+    }
   }
 }
 
@@ -256,11 +275,11 @@ app.get('/test-message', async (req, res) => {
 
 // Add a test info endpoint that shows the curl command
 app.get('/test-info', (req, res) => {
-  const to = req.query.to || '919741301245'; // Default number or get from query
+  const to = req.query.to || 'YOUR_PHONE_NUMBER'; // Default number or get from query
   
   const curlCommand = `curl -i -X POST \\
   https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages \\
-  -H 'Authorization: Bearer ${WHATSAPP_API_KEY}' \\
+  -H 'Authorization: Bearer YOUR_API_KEY' \\
   -H 'Content-Type: application/json' \\
   -d '{ "messaging_product": "whatsapp", "to": "${to}", "type": "template", "template": { "name": "hello_world", "language": { "code": "en_US" } } }'`;
 
@@ -273,16 +292,19 @@ app.get('/test-info', (req, res) => {
           h1 { color: #128C7E; }
           .info { background: #f0f0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
           pre { background: #eee; padding: 15px; border-radius: 5px; overflow-x: auto; }
+          .warning { color: #721c24; background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 10px; border-radius: 5px; }
         </style>
       </head>
       <body>
         <h1>WhatsApp Test Information</h1>
+        <div class="warning">
+          <strong>Note:</strong> For security reasons, sensitive values are not displayed. Use your actual API key and phone number when testing.
+        </div>
         <div class="info">
-          <h2>Environment Variables:</h2>
+          <h2>Environment Variables Status:</h2>
           <ul>
             <li><strong>API Version:</strong> ${API_VERSION}</li>
-            <li><strong>Phone Number ID:</strong> ${PHONE_NUMBER_ID}</li>
-            <li><strong>API Key Length:</strong> ${WHATSAPP_API_KEY ? WHATSAPP_API_KEY.length : 'not set'} characters</li>
+            <li><strong>Configuration Status:</strong> ${WHATSAPP_API_KEY && PHONE_NUMBER_ID ? '✅ Configured' : '❌ Missing'}</li>
           </ul>
         </div>
         <div class="info">
@@ -294,8 +316,9 @@ app.get('/test-info', (req, res) => {
           </ul>
         </div>
         <div class="info">
-          <h2>Equivalent cURL Command:</h2>
+          <h2>Example cURL Command Format:</h2>
           <pre>${curlCommand}</pre>
+          <p><em>Replace YOUR_API_KEY with your actual WhatsApp API key</em></p>
         </div>
       </body>
     </html>
