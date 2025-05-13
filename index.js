@@ -489,56 +489,84 @@ async function processIncomingMessage(message, from, userName) {
 // Webhook for incoming messages
 app.post('/webhook', async (req, res) => {
   try {
-    // Debug logging for environment variables
-    console.log('============ DEBUG INFO ============');
-    console.log('API Version:', process.env.API_VERSION);
-    console.log('Phone Number ID:', process.env.PHONE_NUMBER_ID);
-    console.log('API Key Length:', process.env.WHATSAPP_API_KEY ? process.env.WHATSAPP_API_KEY.length : 'not set');
-    console.log('Verify Token:', process.env.VERIFY_TOKEN);
-    console.log('==================================');
-
-    // Log all incoming webhook requests
-    console.log('============ WEBHOOK RECEIVED ============');
-    console.log('Headers:', JSON.stringify(req.headers, null, 2));
+    // Log incoming request immediately
+    console.log('=== INCOMING WEBHOOK REQUEST ===');
+    console.log('Time:', new Date().toISOString());
     console.log('Body:', JSON.stringify(req.body, null, 2));
-    console.log('==========================================');
-    
+
     // Immediately respond to the webhook to avoid timeouts
     res.status(200).send('EVENT_RECEIVED');
 
-    // Check if this is a WhatsApp message
+    // Process the webhook payload
     if (req.body.object === 'whatsapp_business_account') {
-      for (const entry of req.body.entry || []) {
-        for (const change of entry.changes || []) {
+      const entries = req.body.entry || [];
+      
+      // Process each entry sequentially
+      for (const entry of entries) {
+        const changes = entry.changes || [];
+        
+        for (const change of changes) {
           const value = change.value;
-          
-          // Check if this is a status update
+
+          // Skip if this is a status update
           if (value.statuses) {
             console.log('Received status update:', value.statuses[0].status);
-            continue; // Skip status updates
+            continue;
           }
 
-          // Check if this is a new message
-          if (change.field === 'messages' && 
-              value.messages && 
-              value.messages[0] &&
-              value.messages[0].type === 'text') { // Only process text messages
-            
+          // Process messages
+          if (value.messages && value.messages.length > 0) {
             const message = value.messages[0];
-            
-            // Extract user name from contacts if available
-            let userName = 'there';
-            if (value.contacts?.[0]?.profile?.name) {
-              userName = value.contacts[0].profile.name;
+
+            // Skip if not a text message
+            if (message.type !== 'text') {
+              console.log('Skipping non-text message:', message.type);
+              continue;
             }
 
-            console.log(`Processing message from ${message.from} (${userName}):`, JSON.stringify(message, null, 2));
+            // Get user info
+            const userName = value.contacts?.[0]?.profile?.name || 'there';
+            const userPhone = message.from;
+            const messageText = message.text.body;
 
-            // Process message based on type and user state
-            await processIncomingMessage(message, message.from, userName);
-            console.log(`Response sent to ${message.from}`);
-          } else {
-            console.log('Skipping non-text message or status update');
+            console.log(`Processing message: "${messageText}" from ${userPhone} (${userName})`);
+
+            // Process greeting messages immediately
+            if (messageText.toLowerCase().trim() === 'hi') {
+              try {
+                console.log(`Sending welcome message to ${userPhone}`);
+                await sendInteractiveListMessage(
+                  userPhone,
+                  'Electronic City Municipal Services',
+                  `Hi ${userName}, welcome to Electronic City Municipal Services.\nPlease select one of our services:`,
+                  'View Services',
+                  [
+                    {
+                      title: 'Municipal Services',
+                      rows: [
+                        { id: 'property_tax', title: 'Pay Property tax', description: 'Pay your property tax online' },
+                        { id: 'water_bill', title: 'Pay Water charges', description: 'Pay your water bill online' }
+                      ]
+                    }
+                  ]
+                );
+                console.log(`Welcome message sent successfully to ${userPhone}`);
+              } catch (error) {
+                console.error('Error sending welcome message:', error);
+                // Try fallback text message
+                try {
+                  await sendWhatsAppMessage(
+                    userPhone,
+                    `Hi ${userName}, welcome to Electronic City Municipal Services.\n\nAvailable services:\n1. Property Tax Payment - reply with '1'\n2. Water Bill Payment - reply with '2'`
+                  );
+                } catch (fallbackError) {
+                  console.error('Error sending fallback message:', fallbackError);
+                }
+              }
+            } else {
+              // Process other messages through the regular flow
+              await processIncomingMessage(message, userPhone, userName);
+            }
           }
         }
       }
