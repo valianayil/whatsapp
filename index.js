@@ -243,10 +243,7 @@ app.get('/webhook', (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
   
-  // Set this in your .env file or change it here
-  const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'electronic_city_municipal_services';
-
-  if (mode && token === VERIFY_TOKEN) {
+  if (mode && token === process.env.VERIFY_TOKEN) {
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
@@ -363,10 +360,10 @@ app.post('/webhook', async (req, res) => {
   try {
     // Debug logging for environment variables
     console.log('============ DEBUG INFO ============');
-    console.log('API Version:', API_VERSION);
-    console.log('Phone Number ID:', PHONE_NUMBER_ID);
-    console.log('API Key Length:', WHATSAPP_API_KEY ? WHATSAPP_API_KEY.length : 'not set');
-    console.log('Verify Token:', VERIFY_TOKEN);
+    console.log('API Version:', process.env.API_VERSION);
+    console.log('Phone Number ID:', process.env.PHONE_NUMBER_ID);
+    console.log('API Key Length:', process.env.WHATSAPP_API_KEY ? process.env.WHATSAPP_API_KEY.length : 'not set');
+    console.log('Verify Token:', process.env.VERIFY_TOKEN);
     console.log('==================================');
 
     // Log all incoming webhook requests
