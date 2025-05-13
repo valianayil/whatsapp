@@ -47,7 +47,7 @@ app.get('/webhook-test', (req, res) => {
         <div class="info">
           <p>Use this information to configure your webhook in the Meta Developer Portal:</p>
           <ul>
-            <li><strong>Callback URL:</strong> <code>https://whatsapp-theta-five.vercel.app/webhook</code></li>
+            <li><strong>Callback URL:</strong> <code>https://whatsapp-nu-neon.vercel.app/webhook</code></li>
             <li><strong>Verify Token:</strong> <code>${process.env.VERIFY_TOKEN || 'electronic_city_municipal_services'}</code></li>
             <li><strong>Fields to subscribe:</strong> <code>messages</code></li>
           </ul>
