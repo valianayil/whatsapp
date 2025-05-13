@@ -391,58 +391,26 @@ async function processIncomingMessage(message, from, userName) {
   console.log(`Processing message from ${from}, userName: ${userName}`);
 
   try {
-    // Handle messages based on type
+    // Handle text messages
     if (message.type === 'text') {
-      // Handle text messages
       const text = message.text.body.toLowerCase().trim();
-      console.log(`Received text message: "${text}" from ${from}`);
-
-      // Always process greetings immediately
-      if (text === 'hi' || text === 'hello' || text === 'hey' || text === 'hola') {
-        console.log(`Sending welcome message to ${from} with name ${userName}`);
-        try {
-          await sendInteractiveListMessage(
-            message.from, // Use message.from to ensure we reply to the sender
-            'Electronic City Municipal Services',
-            `Hi ${userName}, welcome to Electronic City Municipal Services.\nPlease select one of our services:`,
-            'View Services',
-            [
-              {
-                title: 'Municipal Services',
-                rows: [
-                  { id: 'property_tax', title: 'Pay Property tax', description: 'Pay your property tax online' },
-                  { id: 'water_bill', title: 'Pay Water charges', description: 'Pay your water bill online' }
-                ]
-              }
-            ]
-          );
-        } catch (error) {
-          console.error('Error in greeting flow:', error);
-          // If interactive message fails, send fallback text message
-          await sendWhatsAppMessage(
-            message.from, // Use message.from to ensure we reply to the sender
-            `Hi ${userName}, welcome to Electronic City Municipal Services.\n\nAvailable services:\n1. Property Tax Payment - reply with '1'\n2. Water Bill Payment - reply with '2'`
-          );
-        }
-        return;
-      }
 
       // Handle property tax related messages
-      if (text === '1' || text === 'property' || text === 'property tax' || text.includes('property')) {
-        await sendWhatsAppMessage(message.from, 'Please enter your PID number.');
+      if (text === 'property' || text.includes('property tax') || text.includes('pid')) {
+        await sendWhatsAppMessage(from, 'Please enter your PID number to pay property tax.');
         return;
       }
 
       // Handle water bill related messages
-      if (text === '2' || text === 'water' || text === 'water bill' || text.includes('water')) {
-        await sendWhatsAppMessage(message.from, 'Please enter your Water Billing ID.');
+      if (text === 'water' || text.includes('water bill') || text.includes('water id')) {
+        await sendWhatsAppMessage(from, 'Please enter your Water Billing ID to pay water bill.');
         return;
       }
 
       // Handle PID number format (assuming PID is numeric and 6-10 digits)
       if (/^\d{6,10}$/.test(text)) {
         await sendWhatsAppMessage(
-          message.from,
+          from,
           `Thank you! You can pay your property tax by clicking on this link:\nhttps://municipality.com/paytax?userID=${text}`
         );
         return;
@@ -451,34 +419,24 @@ async function processIncomingMessage(message, from, userName) {
       // Handle Water ID format (assuming Water ID is alphanumeric and 6-12 characters)
       if (/^[A-Za-z0-9]{6,12}$/.test(text)) {
         await sendWhatsAppMessage(
-          message.from,
+          from,
           `Thank you! You can pay your water bill by clicking on this link:\nhttps://municipality.com/waterbill?userID=${text}`
         );
         return;
       }
 
-      // If we reach here, we didn't understand the message
+      // If we reach here, send menu again
       await sendWhatsAppMessage(
-        message.from,
-        `I'm not sure what you're looking for. Please try one of these options:\n\n1. Say "hi" for a welcome message\n2. Type "1" for Property Tax Payment\n3. Type "2" for Water Bill Payment`
+        from,
+        `I'm not sure what you're looking for. Say "hi" to see our service menu again.`
       );
-    } else if (message.type === 'interactive') {
-      // Handle interactive responses
-      const interactive = message.interactive;
-      if (interactive.type === 'list_reply') {
-        if (interactive.list_reply.id === 'property_tax') {
-          await sendWhatsAppMessage(message.from, 'Please enter your PID number.');
-        } else if (interactive.list_reply.id === 'water_bill') {
-          await sendWhatsAppMessage(message.from, 'Please enter your Water Billing ID.');
-        }
-      }
     }
   } catch (error) {
     console.error('Error in processIncomingMessage:', error);
     try {
       await sendWhatsAppMessage(
-        message.from,
-        'Sorry, I encountered an error processing your message. Please try again.'
+        from,
+        'Sorry, I encountered an error processing your message. Please try again by saying "hi".'
       );
     } catch (fallbackError) {
       console.error('Error sending error message:', fallbackError);
@@ -488,84 +446,116 @@ async function processIncomingMessage(message, from, userName) {
 
 // Webhook for incoming messages
 app.post('/webhook', async (req, res) => {
+  // Log minimal info and send immediate response
+  console.log('Webhook received at:', new Date().toISOString());
+  res.status(200).send('EVENT_RECEIVED');
+
   try {
-    // Log incoming request immediately
-    console.log('=== INCOMING WEBHOOK REQUEST ===');
-    console.log('Time:', new Date().toISOString());
-    console.log('Body:', JSON.stringify(req.body, null, 2));
+    // Process valid webhook data only
+    if (!req.body.object || req.body.object !== 'whatsapp_business_account') {
+      console.log('Invalid webhook object:', req.body.object);
+      return;
+    }
 
-    // Immediately respond to the webhook to avoid timeouts
-    res.status(200).send('EVENT_RECEIVED');
-
-    // Process the webhook payload
-    if (req.body.object === 'whatsapp_business_account') {
-      const entries = req.body.entry || [];
-      
-      // Process each entry sequentially
-      for (const entry of entries) {
-        const changes = entry.changes || [];
+    const entries = req.body.entry || [];
+    for (const entry of entries) {
+      const changes = entry.changes || [];
+      for (const change of changes) {
+        const value = change.value;
         
-        for (const change of changes) {
-          const value = change.value;
+        // Skip status updates
+        if (value.statuses) {
+          console.log('Skipping status update');
+          continue;
+        }
 
-          // Skip if this is a status update
-          if (value.statuses) {
-            console.log('Received status update:', value.statuses[0].status);
-            continue;
-          }
+        // Process messages
+        if (value.messages && value.messages.length > 0) {
+          const message = value.messages[0];
+          const userName = value.contacts?.[0]?.profile?.name || 'there';
+          const userPhone = message.from;
 
-          // Process messages
-          if (value.messages && value.messages.length > 0) {
-            const message = value.messages[0];
+          // Process text messages
+          if (message.type === 'text') {
+            const text = message.text.body.toLowerCase().trim();
+            console.log(`Processing text message: "${text}" from ${userPhone} (${userName})`);
 
-            // Skip if not a text message
-            if (message.type !== 'text') {
-              console.log('Skipping non-text message:', message.type);
-              continue;
-            }
-
-            // Get user info
-            const userName = value.contacts?.[0]?.profile?.name || 'there';
-            const userPhone = message.from;
-            const messageText = message.text.body;
-
-            console.log(`Processing message: "${messageText}" from ${userPhone} (${userName})`);
-
-            // Process greeting messages immediately
-            if (messageText.toLowerCase().trim() === 'hi') {
+            if (text === 'hi' || text === 'hello' || text === 'hey' || text === 'hola') {
+              console.log(`Sending immediate welcome response to ${userPhone}`);
               try {
-                console.log(`Sending welcome message to ${userPhone}`);
-                await sendInteractiveListMessage(
+                // Send simple text message for immediate response
+                await sendWhatsAppMessage(
                   userPhone,
-                  'Electronic City Municipal Services',
-                  `Hi ${userName}, welcome to Electronic City Municipal Services.\nPlease select one of our services:`,
-                  'View Services',
-                  [
-                    {
-                      title: 'Municipal Services',
-                      rows: [
-                        { id: 'property_tax', title: 'Pay Property tax', description: 'Pay your property tax online' },
-                        { id: 'water_bill', title: 'Pay Water charges', description: 'Pay your water bill online' }
-                      ]
-                    }
-                  ]
+                  `Hi ${userName}, welcome to Electronic City Municipal Services! Loading menu...`
                 );
-                console.log(`Welcome message sent successfully to ${userPhone}`);
+
+                // Then send interactive menu - retrying up to 3 times if needed
+                let success = false;
+                let attempts = 0;
+                
+                while (!success && attempts < 3) {
+                  attempts++;
+                  try {
+                    await sendInteractiveListMessage(
+                      userPhone,
+                      'Electronic City Municipal Services',
+                      `Please select one of our services:`,
+                      'View Services',
+                      [{
+                        title: 'Municipal Services',
+                        rows: [
+                          { id: 'property_tax', title: 'Pay Property tax', description: 'Pay your property tax online' },
+                          { id: 'water_bill', title: 'Pay Water charges', description: 'Pay your water bill online' }
+                        ]
+                      }]
+                    );
+                    success = true;
+                    console.log(`Interactive menu sent successfully to ${userPhone} on attempt ${attempts}`);
+                  } catch (menuError) {
+                    console.error(`Attempt ${attempts} failed:`, menuError.message);
+                    if (attempts >= 3) {
+                      throw menuError; // Re-throw after final attempt
+                    }
+                    // Wait briefly before retrying
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                  }
+                }
               } catch (error) {
-                console.error('Error sending welcome message:', error);
-                // Try fallback text message
+                console.error('Error in greeting flow:', error);
+                // Send fallback message if interactive message fails after retries
                 try {
                   await sendWhatsAppMessage(
                     userPhone,
-                    `Hi ${userName}, welcome to Electronic City Municipal Services.\n\nAvailable services:\n1. Property Tax Payment - reply with '1'\n2. Water Bill Payment - reply with '2'`
+                    `Our interactive menu is temporarily unavailable. Please try again shortly or use these text commands:\n\n• For Property Tax: Type "property"\n• For Water Bill: Type "water"`
                   );
                 } catch (fallbackError) {
-                  console.error('Error sending fallback message:', fallbackError);
+                  console.error('Critical error - even fallback failed:', fallbackError);
                 }
               }
             } else {
-              // Process other messages through the regular flow
+              // Process other messages through regular flow
               await processIncomingMessage(message, userPhone, userName);
+            }
+          } else if (message.type === 'interactive') {
+            // Handle interactive responses
+            console.log(`Processing interactive message from ${userPhone} (${userName})`);
+            try {
+              const interactive = message.interactive;
+              if (interactive.type === 'list_reply') {
+                if (interactive.list_reply.id === 'property_tax') {
+                  await sendWhatsAppMessage(userPhone, 'Please enter your PID number to pay property tax.');
+                } else if (interactive.list_reply.id === 'water_bill') {
+                  await sendWhatsAppMessage(userPhone, 'Please enter your Water Billing ID to pay water bill.');
+                } else {
+                  await sendWhatsAppMessage(userPhone, `Sorry, I couldn't process that selection. Please try again.`);
+                }
+              } else {
+                console.log(`Unknown interactive type: ${interactive.type}`);
+                await sendWhatsAppMessage(userPhone, `I couldn't process that selection. Please try again.`);
+              }
+            } catch (error) {
+              console.error('Error processing interactive message:', error);
+              await sendWhatsAppMessage(userPhone, 'Sorry, there was an error processing your selection. Please try again.');
             }
           }
         }
