@@ -1,0 +1,486 @@
+const express = require('express');
+const axios = require('axios');
+require('dotenv').config();
+
+const app = express();
+const port = process.env.PORT || 3000;
+const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY;
+const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+const API_VERSION = process.env.API_VERSION || 'v22.0';
+
+// Middleware to parse JSON bodies
+app.use(express.json());
+
+// Add request logging middleware
+app.use((req, res, next) => {
+  console.log('=== INCOMING REQUEST ===');
+  console.log('Time:', new Date().toISOString());
+  console.log('Method:', req.method);
+  console.log('Path:', req.path);
+  console.log('Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+  console.log('=======================');
+  next();
+});
+
+// Welcome route
+app.get('/', (req, res) => {
+  res.send('Electronic City Municipal Services WhatsApp Bot is running!');
+});
+
+// Test webhook route
+app.get('/webhook-test', (req, res) => {
+  res.send(`
+    <html>
+      <head>
+        <title>WhatsApp Webhook Test</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+          h1 { color: #128C7E; }
+          .info { background: #f0f0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+          .steps { line-height: 1.6; }
+          code { background: #eee; padding: 2px 5px; border-radius: 3px; }
+        </style>
+      </head>
+      <body>
+        <h1>WhatsApp Webhook Test Page</h1>
+        <div class="info">
+          <p>Use this information to configure your webhook in the Meta Developer Portal:</p>
+          <ul>
+            <li><strong>Callback URL:</strong> <code>https://whatsapp-theta-five.vercel.app/webhook</code></li>
+            <li><strong>Verify Token:</strong> <code>${process.env.VERIFY_TOKEN || 'electronic_city_municipal_services'}</code></li>
+            <li><strong>Fields to subscribe:</strong> <code>messages</code></li>
+          </ul>
+        </div>
+        <div class="steps">
+          <h2>Steps to Configure Webhook:</h2>
+          <ol>
+            <li>Go to <a href="https://developers.facebook.com/" target="_blank">Meta Developer Portal</a></li>
+            <li>Navigate to your WhatsApp Business App</li>
+            <li>Go to WhatsApp &gt; Configuration &gt; Webhooks</li>
+            <li>Click "Configure Webhooks" or "Edit" if already configured</li>
+            <li>Enter the Callback URL and Verify Token provided above</li>
+            <li>Select "messages" under Subscription Fields</li>
+            <li>Click "Verify and Save"</li>
+          </ol>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+// Conversation state tracking
+const userStates = {};
+
+// WhatsApp API message sender function
+async function sendWhatsAppMessage(to, message) {
+  try {
+    console.log(`Sending WhatsApp message to ${to}: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
+    const response = await axios({
+      method: 'POST',
+      url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      data: {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to,
+        type: 'text',
+        text: {
+          body: message
+        }
+      }
+    });
+    console.log(`Message sent successfully to ${to}, response:`, JSON.stringify(response.data, null, 2));
+    return response.data;
+  } catch (error) {
+    console.error('Error sending WhatsApp message:', error.response?.data || error.message);
+    console.error('Full error:', error);
+    throw error;
+  }
+}
+
+// Send interactive message with buttons
+async function sendInteractiveButtonMessage(to, headerText, bodyText, buttons) {
+  try {
+    console.log(`Sending interactive button message to ${to}`);
+    console.log(`Header: "${headerText}", Body: "${bodyText.substring(0, 50)}${bodyText.length > 50 ? '...' : ''}"`);
+    console.log('Buttons:', JSON.stringify(buttons, null, 2));
+    
+    const response = await axios({
+      method: 'POST',
+      url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      data: {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to,
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          header: headerText ? {
+            type: 'text',
+            text: headerText
+          } : undefined,
+          body: {
+            text: bodyText
+          },
+          action: {
+            buttons: buttons
+          }
+        }
+      }
+    });
+    console.log(`Interactive message sent successfully to ${to}, response:`, JSON.stringify(response.data, null, 2));
+    return response.data;
+  } catch (error) {
+    console.error('Error sending interactive message:', error.response?.data || error.message);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    throw error;
+  }
+}
+
+// Send a template message (useful for testing)
+async function sendTemplateMessage(to, templateName, languageCode = 'en_US') {
+  try {
+    const response = await axios({
+      method: 'POST',
+      url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      data: {
+        messaging_product: 'whatsapp',
+        to: to,
+        type: 'template',
+        template: {
+          name: templateName,
+          language: {
+            code: languageCode
+          }
+        }
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error sending template message:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+// Send interactive list message with sections
+async function sendInteractiveListMessage(to, headerText, bodyText, buttonText, sections) {
+  try {
+    const response = await axios({
+      method: 'POST',
+      url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      data: {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to,
+        type: 'interactive',
+        interactive: {
+          type: 'list',
+          header: headerText ? {
+            type: 'text',
+            text: headerText
+          } : undefined,
+          body: {
+            text: bodyText
+          },
+          footer: {
+            text: 'Powered by Electronic City Municipal Corporation'
+          },
+          action: {
+            button: buttonText,
+            sections: sections
+          }
+        }
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error sending list message:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+// Webhook verification endpoint for WhatsApp
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  
+  // Set this in your .env file or change it here
+  const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'electronic_city_municipal_services';
+
+  if (mode && token === VERIFY_TOKEN) {
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
+  }
+});
+
+// Add a test endpoint to try sending a message
+app.get('/test-message', async (req, res) => {
+  try {
+    const to = req.query.to; // Get the target phone number from query parameter
+    
+    if (!to) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Please provide a 'to' parameter with the recipient's phone number" 
+      });
+    }
+    
+    // Send a template message
+    const result = await sendTemplateMessage(to, 'hello_world');
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Add a debug test route
+app.get('/debug-test', async (req, res) => {
+  try {
+    console.log('Debug test initiated');
+    console.log('Environment variables:');
+    console.log('API Version:', API_VERSION);
+    console.log('Phone Number ID:', PHONE_NUMBER_ID);
+    console.log('API Key Length:', WHATSAPP_API_KEY ? WHATSAPP_API_KEY.length : 'not set');
+    
+    // Test the API connection
+    const response = await axios({
+      method: 'GET',
+      url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}`,
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.json({
+      success: true,
+      apiConnection: 'successful',
+      phoneNumberDetails: response.data
+    });
+  } catch (error) {
+    console.error('Debug test error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// Webhook for incoming messages
+app.post('/webhook', async (req, res) => {
+  try {
+    // Debug logging for environment variables
+    console.log('============ DEBUG INFO ============');
+    console.log('API Version:', API_VERSION);
+    console.log('Phone Number ID:', PHONE_NUMBER_ID);
+    console.log('API Key Length:', WHATSAPP_API_KEY ? WHATSAPP_API_KEY.length : 'not set');
+    console.log('Verify Token:', VERIFY_TOKEN);
+    console.log('==================================');
+
+    // Log all incoming webhook requests
+    console.log('============ WEBHOOK RECEIVED ============');
+    console.log('Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('Body:', JSON.stringify(req.body, null, 2));
+    console.log('==========================================');
+    
+    // Immediately respond to the webhook to avoid timeouts
+    res.status(200).send('EVENT_RECEIVED');
+
+    // Check if this is a WhatsApp message
+    if (req.body.object === 'whatsapp_business_account') {
+      if (req.body.entry && req.body.entry.length > 0) {
+        const entry = req.body.entry[0];
+        
+        if (entry.changes && entry.changes.length > 0) {
+          const change = entry.changes[0];
+          console.log('Webhook change value:', JSON.stringify(change.value, null, 2));
+          
+          if (change.field === 'messages' && 
+              change.value && 
+              change.value.messages && 
+              change.value.messages.length > 0) {
+            
+            const message = change.value.messages[0];
+            const from = message.from; // User's phone number
+            
+            // Extract user name from contacts if available
+            let userName = 'there';
+            if (change.value.contacts && change.value.contacts.length > 0) {
+              userName = change.value.contacts[0].profile.name || 'there';
+            }
+
+            console.log(`Processing message from ${from} (${userName}):`, JSON.stringify(message, null, 2));
+
+            // Process message based on type and user state
+            await processIncomingMessage(message, from, userName);
+            console.log(`Response sent to ${from}`);
+          } else {
+            console.log('Received webhook event but no messages found in change value:', JSON.stringify(change.value, null, 2));
+          }
+        } else {
+          console.log('No changes found in entry:', JSON.stringify(entry, null, 2));
+        }
+      } else {
+        console.log('No entries found in webhook body');
+      }
+    } else {
+      console.log('Received webhook event but not a WhatsApp message. Full body:', JSON.stringify(req.body, null, 2));
+    }
+  } catch (error) {
+    console.error('Error processing webhook:', error);
+  }
+});
+
+// Process incoming messages
+async function processIncomingMessage(message, from, userName) {
+  console.log(`Processing message from ${from}, userName: ${userName}`);
+
+  // Handle messages based on type
+  if (message.type === 'text') {
+    // Handle text messages
+    const text = message.text.body.toLowerCase().trim();
+    console.log(`Received text message: "${text}" from ${from}`);
+
+    // Always process greetings immediately
+    if (text === 'hi' || text === 'hello' || text === 'hey' || text === 'hola') {
+      console.log(`Sending welcome message to ${from} with name ${userName}`);
+      try {
+        await sendInteractiveButtonMessage(
+          from,
+          'Electronic City Municipal Services',
+          `Hi ${userName}, welcome to Electronic City Municipal Services.\nPress the button below to view a list of our services.`,
+          [{ type: 'reply', reply: { id: 'select_service', title: 'Select Service' } }]
+        );
+        return;
+      } catch (error) {
+        console.error('Error sending welcome message:', error);
+        // Fallback to simple text message if interactive message fails
+        await sendWhatsAppMessage(
+          from,
+          `Hi ${userName}, welcome to Electronic City Municipal Services. To continue, please reply with "menu" to see available services.`
+        );
+        return;
+      }
+    }
+
+    // Handle menu or services request
+    if (text === 'menu' || text === 'services' || text === 'select service') {
+      try {
+        await sendInteractiveListMessage(
+          from,
+          'Available Services',
+          `Hi ${userName}, please select one of the following services:`,
+          'Select Service',
+          [
+            {
+              title: 'Municipal Services',
+              rows: [
+                { id: 'property_tax', title: 'Pay Property tax', description: 'Pay your property tax online' },
+                { id: 'water_bill', title: 'Pay Water charges', description: 'Pay your water bill online' }
+              ]
+            }
+          ]
+        );
+        return;
+      } catch (error) {
+        console.error('Error sending services list:', error);
+        // Fallback to simple text message
+        await sendWhatsAppMessage(
+          from,
+          `Available services:\n1. Property Tax Payment - reply with '1'\n2. Water Bill Payment - reply with '2'`
+        );
+        return;
+      }
+    }
+
+    // Handle property tax related messages
+    if (text === '1' || text === 'property' || text === 'property tax' || text.includes('property')) {
+      await sendWhatsAppMessage(from, 'Please enter your PID number.');
+      return;
+    }
+
+    // Handle water bill related messages
+    if (text === '2' || text === 'water' || text === 'water bill' || text.includes('water')) {
+      await sendWhatsAppMessage(from, 'Please enter your Water Billing ID.');
+      return;
+    }
+
+    // Handle PID number format (assuming PID is numeric and 6-10 digits)
+    if (/^\d{6,10}$/.test(text)) {
+      await sendWhatsAppMessage(
+        from, 
+        `Thank you! You can pay your property tax by clicking on this link:\nhttps://municipality.com/paytax?userID=${text}`
+      );
+      return;
+    }
+
+    // Handle Water ID format (assuming Water ID is alphanumeric and 6-12 characters)
+    if (/^[A-Za-z0-9]{6,12}$/.test(text)) {
+      await sendWhatsAppMessage(
+        from,
+        `Thank you! You can pay your water bill by clicking on this link:\nhttps://municipality.com/waterbill?userID=${text}`
+      );
+      return;
+    }
+
+    // If we reach here, we didn't understand the message
+    await sendWhatsAppMessage(
+      from,
+      `I'm not sure what you're looking for. Please try one of these options:\n\n1. Say "hi" for a welcome message\n2. Say "menu" to see available services\n3. Type "1" for Property Tax Payment\n4. Type "2" for Water Bill Payment`
+    );
+  } else if (message.type === 'interactive') {
+    // Handle button clicks and list selections
+    const interactive = message.interactive;
+    if (interactive.type === 'button_reply') {
+      if (interactive.button_reply.id === 'select_service') {
+        await sendInteractiveListMessage(
+          from,
+          'Available Services',
+          `Hi ${userName}, please select one of the following services:`,
+          'Select Service',
+          [
+            {
+              title: 'Municipal Services',
+              rows: [
+                { id: 'property_tax', title: 'Pay Property tax', description: 'Pay your property tax online' },
+                { id: 'water_bill', title: 'Pay Water charges', description: 'Pay your water bill online' }
+              ]
+            }
+          ]
+        );
+      }
+    } else if (interactive.type === 'list_reply') {
+      if (interactive.list_reply.id === 'property_tax') {
+        await sendWhatsAppMessage(from, 'Please enter your PID number.');
+      } else if (interactive.list_reply.id === 'water_bill') {
+        await sendWhatsAppMessage(from, 'Please enter your Water Billing ID.');
+      }
+    }
+  }
+}
+
+// Start the server
+app.listen(port, () => {
+  console.log(`WhatsApp Chatbot server listening on port ${port}`);
+}); 
