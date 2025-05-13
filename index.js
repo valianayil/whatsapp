@@ -510,34 +510,35 @@ app.post('/webhook', async (req, res) => {
     if (req.body.object === 'whatsapp_business_account') {
       for (const entry of req.body.entry || []) {
         for (const change of entry.changes || []) {
-          // Only process if this is a new message
-          if (change.field === 'messages' && 
-              change.value?.messages?.[0] &&
-              !change.value.messages[0].context) { // Skip if message has context (is a reply)
-            
-            const message = change.value.messages[0];
-            
-            // Skip if this is a status message
-            if (message.type === 'status') {
-              console.log('Skipping status message');
-              continue;
-            }
+          const value = change.value;
+          
+          // Check if this is a status update
+          if (value.statuses) {
+            console.log('Received status update:', value.statuses[0].status);
+            continue; // Skip status updates
+          }
 
-            const from = message.from; // User's phone number
+          // Check if this is a new message
+          if (change.field === 'messages' && 
+              value.messages && 
+              value.messages[0] &&
+              value.messages[0].type === 'text') { // Only process text messages
+            
+            const message = value.messages[0];
             
             // Extract user name from contacts if available
             let userName = 'there';
-            if (change.value.contacts?.[0]?.profile?.name) {
-              userName = change.value.contacts[0].profile.name;
+            if (value.contacts?.[0]?.profile?.name) {
+              userName = value.contacts[0].profile.name;
             }
 
-            console.log(`Processing message from ${from} (${userName}):`, JSON.stringify(message, null, 2));
+            console.log(`Processing message from ${message.from} (${userName}):`, JSON.stringify(message, null, 2));
 
             // Process message based on type and user state
-            await processIncomingMessage(message, from, userName);
-            console.log(`Response sent to ${from}`);
+            await processIncomingMessage(message, message.from, userName);
+            console.log(`Response sent to ${message.from}`);
           } else {
-            console.log('Skipping non-message or reply message change:', change.field);
+            console.log('Skipping non-text message or status update');
           }
         }
       }
