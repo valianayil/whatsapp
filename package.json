@@ -1,0 +1,31 @@
+{
+  "name": "whatsapp",
+  "version": "1.0.0",
+  "description": "WhatsApp Chatbot for Electronic City Municipal Services",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test-msg": "node test-whatsapp.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "chatbot",
+    "municipal",
+    "services"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
