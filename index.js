@@ -246,12 +246,60 @@ app.get('/test-message', async (req, res) => {
       });
     }
     
-    // Send a template message
+    // Send a template message using environment variables
     const result = await sendTemplateMessage(to, 'hello_world');
     res.json({ success: true, result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// Add a test info endpoint that shows the curl command
+app.get('/test-info', (req, res) => {
+  const to = req.query.to || '919741301245'; // Default number or get from query
+  
+  const curlCommand = `curl -i -X POST \\
+  https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages \\
+  -H 'Authorization: Bearer ${WHATSAPP_API_KEY}' \\
+  -H 'Content-Type: application/json' \\
+  -d '{ "messaging_product": "whatsapp", "to": "${to}", "type": "template", "template": { "name": "hello_world", "language": { "code": "en_US" } } }'`;
+
+  res.send(`
+    <html>
+      <head>
+        <title>WhatsApp Test Info</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+          h1 { color: #128C7E; }
+          .info { background: #f0f0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+          pre { background: #eee; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        </style>
+      </head>
+      <body>
+        <h1>WhatsApp Test Information</h1>
+        <div class="info">
+          <h2>Environment Variables:</h2>
+          <ul>
+            <li><strong>API Version:</strong> ${API_VERSION}</li>
+            <li><strong>Phone Number ID:</strong> ${PHONE_NUMBER_ID}</li>
+            <li><strong>API Key Length:</strong> ${WHATSAPP_API_KEY ? WHATSAPP_API_KEY.length : 'not set'} characters</li>
+          </ul>
+        </div>
+        <div class="info">
+          <h2>Test Endpoints:</h2>
+          <ul>
+            <li><strong>Send Test Message:</strong> <code>/test-message?to=your_number</code></li>
+            <li><strong>Debug Test:</strong> <code>/debug-test</code></li>
+            <li><strong>Webhook Test:</strong> <code>/webhook-test</code></li>
+          </ul>
+        </div>
+        <div class="info">
+          <h2>Equivalent cURL Command:</h2>
+          <pre>${curlCommand}</pre>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 // Add a debug test route
