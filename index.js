@@ -74,31 +74,79 @@ const userStates = {};
 
 // WhatsApp API message sender function
 async function sendWhatsAppMessage(to, message) {
+  console.log(`ATTEMPT: Sending text message to ${to}`);
+  console.log(`Message content: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
+  console.log(`Using Phone Number ID: ${PHONE_NUMBER_ID}`);
+  console.log(`Using API Version: ${API_VERSION}`);
+  
   try {
-    console.log(`Sending WhatsApp message to ${to}: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
+    // Ensure API key and Phone Number ID are valid
+    if (!WHATSAPP_API_KEY || WHATSAPP_API_KEY.length < 10) {
+      console.error('CRITICAL ERROR: Invalid API Key');
+      return { success: false, error: 'Invalid API Key' };
+    }
+    
+    if (!PHONE_NUMBER_ID) {
+      console.error('CRITICAL ERROR: Missing Phone Number ID');
+      return { success: false, error: 'Missing Phone Number ID' };
+    }
+    
+    const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
+    console.log(`Request URL: ${url}`);
+    
+    const data = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to,
+      type: 'text',
+      text: {
+        body: message
+      }
+    };
+    
+    console.log('Request payload:', JSON.stringify(data, null, 2));
+    
     const response = await axios({
       method: 'POST',
-      url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+      url: url,
       headers: {
         'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
         'Content-Type': 'application/json'
       },
-      data: {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: to,
-        type: 'text',
-        text: {
-          body: message
-        }
-      }
+      data: data,
+      timeout: 10000 // 10 seconds timeout
     });
-    console.log(`Message sent successfully to ${to}, response:`, JSON.stringify(response.data, null, 2));
-    return response.data;
+    
+    console.log(`SUCCESS: Message sent to ${to}`);
+    console.log(`Response status: ${response.status}`);
+    console.log(`Response data:`, JSON.stringify(response.data, null, 2));
+    
+    return { success: true, data: response.data };
   } catch (error) {
-    console.error('Error sending WhatsApp message:', error.response?.data || error.message);
-    console.error('Full error:', error);
-    throw error;
+    console.error('ERROR: Failed to send WhatsApp message');
+    
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      console.error(`Response status: ${error.response.status}`);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+      console.error('Response headers:', JSON.stringify(error.response.headers, null, 2));
+    } else if (error.request) {
+      // The request was made but no response was received
+      console.error('No response received from server');
+      console.error('Request details:', error.request);
+    } else {
+      // Something happened in setting up the request that triggered an Error
+      console.error('Error setting up request:', error.message);
+    }
+    
+    console.error('Error config:', JSON.stringify({
+      url: error.config?.url,
+      method: error.config?.method,
+      data: error.config?.data
+    }, null, 2));
+    
+    return { success: false, error: error.message };
   }
 }
 
@@ -198,15 +246,28 @@ async function sendTemplateMessage(to, templateName, languageCode = 'en_US') {
 
 // Send interactive list message with sections
 async function sendInteractiveListMessage(to, headerText, bodyText, buttonText, sections) {
+  console.log('ATTEMPT: Sending interactive list message');
+  console.log(`To: ${to}`);
+  console.log(`Header: "${headerText}"`);
+  console.log(`Body: "${bodyText.substring(0, 50)}${bodyText.length > 50 ? '...' : ''}"`);
+  console.log(`Button: "${buttonText}"`);
+  console.log(`Using Phone Number ID: ${process.env.PHONE_NUMBER_ID}`);
+  console.log(`Using API Version: ${process.env.API_VERSION}`);
+  
   try {
-    console.log('Attempting to send interactive list message:', {
-      to,
-      headerText,
-      bodyText: bodyText.substring(0, 50) + (bodyText.length > 50 ? '...' : ''),
-      buttonText,
-      phoneNumberId: process.env.PHONE_NUMBER_ID,
-      apiVersion: process.env.API_VERSION
-    });
+    // Validate required environment variables
+    if (!process.env.WHATSAPP_API_KEY || process.env.WHATSAPP_API_KEY.length < 10) {
+      console.error('CRITICAL ERROR: Invalid API Key in env variables');
+      return { success: false, error: 'Invalid API Key configuration' };
+    }
+    
+    if (!process.env.PHONE_NUMBER_ID) {
+      console.error('CRITICAL ERROR: Missing Phone Number ID in env variables');
+      return { success: false, error: 'Missing Phone Number ID configuration' };
+    }
+    
+    const url = `https://graph.facebook.com/${process.env.API_VERSION}/${process.env.PHONE_NUMBER_ID}/messages`;
+    console.log(`Request URL: ${url}`);
 
     const requestData = {
       messaging_product: 'whatsapp',
@@ -232,39 +293,45 @@ async function sendInteractiveListMessage(to, headerText, bodyText, buttonText, 
       }
     };
 
-    console.log('Request payload:', JSON.stringify(requestData, null, 2));
+    console.log('Request payload:', JSON.stringify(requestData));
 
     const response = await axios({
       method: 'POST',
-      url: `https://graph.facebook.com/${process.env.API_VERSION}/${process.env.PHONE_NUMBER_ID}/messages`,
+      url: url,
       headers: {
         'Authorization': `Bearer ${process.env.WHATSAPP_API_KEY}`,
         'Content-Type': 'application/json'
       },
-      data: requestData
+      data: requestData,
+      timeout: 15000 // 15 seconds timeout
     });
 
-    console.log('Interactive list message sent successfully. Response:', JSON.stringify(response.data, null, 2));
-    return response.data;
+    console.log('SUCCESS: Interactive list message sent');
+    console.log(`Response status: ${response.status}`);
+    console.log(`Response data:`, JSON.stringify(response.data));
+    
+    return { success: true, data: response.data };
   } catch (error) {
-    console.error('Error sending interactive list message:');
+    console.error('ERROR: Failed to send interactive list message');
+    
     if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
-      console.error('Request config:', JSON.stringify({
-        url: error.config.url,
-        method: error.config.method,
-        headers: {
-          ...error.config.headers,
-          'Authorization': 'Bearer [REDACTED]'
-        }
-      }, null, 2));
+      console.error(`Response status: ${error.response.status}`);
+      console.error('Response data:', JSON.stringify(error.response.data));
+      console.error('Response headers:', JSON.stringify(error.response.headers));
     } else if (error.request) {
-      console.error('No response received from API:', error.request);
+      console.error('No response received from API');
+      console.error('Request details:', error.request);
     } else {
       console.error('Error setting up request:', error.message);
     }
-    throw error;
+    
+    console.error('Error config:', JSON.stringify({
+      url: error.config?.url,
+      method: error.config?.method,
+      data: error.config?.data
+    }));
+    
+    return { success: false, error: error.message };
   }
 }
 
@@ -448,18 +515,23 @@ async function processIncomingMessage(message, from, userName) {
 app.post('/webhook', async (req, res) => {
   // Log minimal info and send immediate response
   console.log('Webhook received at:', new Date().toISOString());
+  
+  // Send immediate response to avoid timeouts
   res.status(200).send('EVENT_RECEIVED');
 
   try {
-    // Process valid webhook data only
+    // Validate webhook data
     if (!req.body.object || req.body.object !== 'whatsapp_business_account') {
       console.log('Invalid webhook object:', req.body.object);
       return;
     }
 
+    console.log('Processing webhook message');
+    
     const entries = req.body.entry || [];
     for (const entry of entries) {
       const changes = entry.changes || [];
+      
       for (const change of changes) {
         const value = change.value;
         
@@ -475,26 +547,27 @@ app.post('/webhook', async (req, res) => {
           const userName = value.contacts?.[0]?.profile?.name || 'there';
           const userPhone = message.from;
 
-          // Process text messages
-          if (message.type === 'text') {
-            const text = message.text.body.toLowerCase().trim();
-            console.log(`Processing text message: "${text}" from ${userPhone} (${userName})`);
+          console.log(`Processing message from ${userPhone} (${userName}), type: ${message.type}`);
 
+          // Handle based on message type
+          if (message.type === 'text') {
+            // Process text messages
+            const text = message.text.body.toLowerCase().trim();
+            console.log(`Text message content: "${text}"`);
+
+            // Check for greetings
             if (text === 'hi' || text === 'hello' || text === 'hey' || text === 'hola') {
-              console.log(`Sending immediate welcome response to ${userPhone}`);
+              console.log(`Sending welcome to ${userPhone}`);
+              
+              // Send welcome message
               try {
-                // Send simple text message for immediate response
                 await sendWhatsAppMessage(
                   userPhone,
                   `Hi ${userName}, welcome to Electronic City Municipal Services! Loading menu...`
                 );
-
-                // Then send interactive menu - retrying up to 3 times if needed
-                let success = false;
-                let attempts = 0;
                 
-                while (!success && attempts < 3) {
-                  attempts++;
+                // Send interactive menu after a short delay
+                setTimeout(async () => {
                   try {
                     await sendInteractiveListMessage(
                       userPhone,
@@ -509,54 +582,69 @@ app.post('/webhook', async (req, res) => {
                         ]
                       }]
                     );
-                    success = true;
-                    console.log(`Interactive menu sent successfully to ${userPhone} on attempt ${attempts}`);
                   } catch (menuError) {
-                    console.error(`Attempt ${attempts} failed:`, menuError.message);
-                    if (attempts >= 3) {
-                      throw menuError; // Re-throw after final attempt
-                    }
-                    // Wait briefly before retrying
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    console.error('Failed to send interactive menu:', menuError);
+                    
+                    // Fallback to text options
+                    await sendWhatsAppMessage(
+                      userPhone,
+                      `Our interactive menu is unavailable. Please reply with:\n• "property" for Property Tax\n• "water" for Water Bill`
+                    );
                   }
-                }
+                }, 1000);
               } catch (error) {
-                console.error('Error in greeting flow:', error);
-                // Send fallback message if interactive message fails after retries
+                console.error('Failed to send welcome message:', error);
+              }
+            } else {
+              // Handle other text messages
+              try {
+                await processIncomingMessage(message, userPhone, userName);
+              } catch (error) {
+                console.error('Error processing message:', error);
                 try {
                   await sendWhatsAppMessage(
                     userPhone,
-                    `Our interactive menu is temporarily unavailable. Please try again shortly or use these text commands:\n\n• For Property Tax: Type "property"\n• For Water Bill: Type "water"`
+                    'Sorry, I encountered an error. Please try again by saying "hi".'
                   );
                 } catch (fallbackError) {
-                  console.error('Critical error - even fallback failed:', fallbackError);
+                  console.error('Failed to send error message:', fallbackError);
                 }
               }
-            } else {
-              // Process other messages through regular flow
-              await processIncomingMessage(message, userPhone, userName);
             }
           } else if (message.type === 'interactive') {
             // Handle interactive responses
-            console.log(`Processing interactive message from ${userPhone} (${userName})`);
+            console.log('Processing interactive message');
+            
             try {
               const interactive = message.interactive;
               if (interactive.type === 'list_reply') {
-                if (interactive.list_reply.id === 'property_tax') {
+                const selection = interactive.list_reply.id;
+                console.log(`User selected: ${selection}`);
+                
+                if (selection === 'property_tax') {
                   await sendWhatsAppMessage(userPhone, 'Please enter your PID number to pay property tax.');
-                } else if (interactive.list_reply.id === 'water_bill') {
+                } else if (selection === 'water_bill') {
                   await sendWhatsAppMessage(userPhone, 'Please enter your Water Billing ID to pay water bill.');
                 } else {
-                  await sendWhatsAppMessage(userPhone, `Sorry, I couldn't process that selection. Please try again.`);
+                  await sendWhatsAppMessage(userPhone, `Sorry, I don't recognize that selection. Please try again.`);
                 }
               } else {
                 console.log(`Unknown interactive type: ${interactive.type}`);
-                await sendWhatsAppMessage(userPhone, `I couldn't process that selection. Please try again.`);
+                await sendWhatsAppMessage(userPhone, `I don't understand that response. Please say "hi" to start over.`);
               }
-            } catch (error) {
-              console.error('Error processing interactive message:', error);
-              await sendWhatsAppMessage(userPhone, 'Sorry, there was an error processing your selection. Please try again.');
+            } catch (interactiveError) {
+              console.error('Error handling interactive message:', interactiveError);
+              try {
+                await sendWhatsAppMessage(
+                  userPhone,
+                  'Sorry, I had trouble processing your selection. Please say "hi" to start over.'
+                );
+              } catch (fallbackError) {
+                console.error('Failed to send error message:', fallbackError);
+              }
             }
+          } else {
+            console.log(`Skipping unsupported message type: ${message.type}`);
           }
         }
       }
@@ -569,4 +657,39 @@ app.post('/webhook', async (req, res) => {
 // Start the server
 app.listen(port, () => {
   console.log(`WhatsApp Chatbot server listening on port ${port}`);
-}); 
+  
+  // Validate critical environment variables on startup
+  console.log('\n=== ENVIRONMENT CONFIGURATION CHECK ===');
+  
+  // Check API key
+  if (!WHATSAPP_API_KEY) {
+    console.error('❌ ERROR: WHATSAPP_API_KEY is not set!');
+  } else if (WHATSAPP_API_KEY.length < 10) {
+    console.error('❌ ERROR: WHATSAPP_API_KEY appears to be invalid (too short)!');
+  } else {
+    console.log('✅ WHATSAPP_API_KEY is configured');
+  }
+  
+  // Check Phone Number ID
+  if (!PHONE_NUMBER_ID) {
+    console.error('❌ ERROR: PHONE_NUMBER_ID is not set!');
+  } else {
+    console.log(`✅ PHONE_NUMBER_ID is configured: ${PHONE_NUMBER_ID}`);
+  }
+  
+  // Check API version
+  if (!API_VERSION) {
+    console.error('❌ ERROR: API_VERSION is not set, using default: v22.0');
+  } else {
+    console.log(`✅ API_VERSION is configured: ${API_VERSION}`);
+  }
+  
+  // Check verify token
+  if (!process.env.VERIFY_TOKEN) {
+    console.error('❌ ERROR: VERIFY_TOKEN is not set!');
+  } else {
+    console.log('✅ VERIFY_TOKEN is configured');
+  }
+  
+  console.log('========================================\n');
+});
