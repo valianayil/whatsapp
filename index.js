@@ -199,40 +199,71 @@ async function sendTemplateMessage(to, templateName, languageCode = 'en_US') {
 // Send interactive list message with sections
 async function sendInteractiveListMessage(to, headerText, bodyText, buttonText, sections) {
   try {
-    const response = await axios({
-      method: 'POST',
-      url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`,
-      headers: {
-        'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      data: {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: to,
-        type: 'interactive',
-        interactive: {
-          type: 'list',
-          header: headerText ? {
-            type: 'text',
-            text: headerText
-          } : undefined,
-          body: {
-            text: bodyText
-          },
-          footer: {
-            text: 'Powered by Electronic City Municipal Corporation'
-          },
-          action: {
-            button: buttonText,
-            sections: sections
-          }
+    console.log('Attempting to send interactive list message:', {
+      to,
+      headerText,
+      bodyText: bodyText.substring(0, 50) + (bodyText.length > 50 ? '...' : ''),
+      buttonText,
+      phoneNumberId: process.env.PHONE_NUMBER_ID,
+      apiVersion: process.env.API_VERSION
+    });
+
+    const requestData = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to,
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        header: headerText ? {
+          type: 'text',
+          text: headerText
+        } : undefined,
+        body: {
+          text: bodyText
+        },
+        footer: {
+          text: 'Powered by Electronic City Municipal Corporation'
+        },
+        action: {
+          button: buttonText,
+          sections: sections
         }
       }
+    };
+
+    console.log('Request payload:', JSON.stringify(requestData, null, 2));
+
+    const response = await axios({
+      method: 'POST',
+      url: `https://graph.facebook.com/${process.env.API_VERSION}/${process.env.PHONE_NUMBER_ID}/messages`,
+      headers: {
+        'Authorization': `Bearer ${process.env.WHATSAPP_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      data: requestData
     });
+
+    console.log('Interactive list message sent successfully. Response:', JSON.stringify(response.data, null, 2));
     return response.data;
   } catch (error) {
-    console.error('Error sending list message:', error.response?.data || error.message);
+    console.error('Error sending interactive list message:');
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data, null, 2));
+      console.error('Request config:', JSON.stringify({
+        url: error.config.url,
+        method: error.config.method,
+        headers: {
+          ...error.config.headers,
+          'Authorization': 'Bearer [REDACTED]'
+        }
+      }, null, 2));
+    } else if (error.request) {
+      console.error('No response received from API:', error.request);
+    } else {
+      console.error('Error setting up request:', error.message);
+    }
     throw error;
   }
 }
@@ -426,88 +457,105 @@ app.post('/webhook', async (req, res) => {
 async function processIncomingMessage(message, from, userName) {
   console.log(`Processing message from ${from}, userName: ${userName}`);
 
-  // Handle messages based on type
-  if (message.type === 'text') {
-    // Handle text messages
-    const text = message.text.body.toLowerCase().trim();
-    console.log(`Received text message: "${text}" from ${from}`);
+  try {
+    // Handle messages based on type
+    if (message.type === 'text') {
+      // Handle text messages
+      const text = message.text.body.toLowerCase().trim();
+      console.log(`Received text message: "${text}" from ${from}`);
 
-    // Always process greetings immediately
-    if (text === 'hi' || text === 'hello' || text === 'hey' || text === 'hola') {
-      console.log(`Sending welcome message to ${from} with name ${userName}`);
-      try {
-        // Send services list directly instead of a button
-        await sendInteractiveListMessage(
-          from,
-          'Electronic City Municipal Services',
-          `Hi ${userName}, welcome to Electronic City Municipal Services.\nPlease select one of our services:`,
-          'View Services',
-          [
-            {
-              title: 'Municipal Services',
-              rows: [
-                { id: 'property_tax', title: 'Pay Property tax', description: 'Pay your property tax online' },
-                { id: 'water_bill', title: 'Pay Water charges', description: 'Pay your water bill online' }
-              ]
-            }
-          ]
+      // Always process greetings immediately
+      if (text === 'hi' || text === 'hello' || text === 'hey' || text === 'hola') {
+        console.log(`Sending welcome message to ${from} with name ${userName}`);
+        try {
+          // First try sending a simple text message to test API connection
+          await sendWhatsAppMessage(
+            from,
+            `Hi ${userName}, welcome to Electronic City Municipal Services.`
+          );
+          
+          // If text message succeeds, try sending the interactive list
+          await sendInteractiveListMessage(
+            from,
+            'Electronic City Municipal Services',
+            `Please select one of our services:`,
+            'View Services',
+            [
+              {
+                title: 'Municipal Services',
+                rows: [
+                  { id: 'property_tax', title: 'Pay Property tax', description: 'Pay your property tax online' },
+                  { id: 'water_bill', title: 'Pay Water charges', description: 'Pay your water bill online' }
+                ]
+              }
+            ]
+          );
+        } catch (error) {
+          console.error('Error in greeting flow:', error);
+          // If interactive message fails, send fallback text message
+          await sendWhatsAppMessage(
+            from,
+            `Hi ${userName}, welcome to Electronic City Municipal Services.\n\nAvailable services:\n1. Property Tax Payment - reply with '1'\n2. Water Bill Payment - reply with '2'`
+          );
+        }
+        return;
+      }
+
+      // Handle property tax related messages
+      if (text === '1' || text === 'property' || text === 'property tax' || text.includes('property')) {
+        await sendWhatsAppMessage(from, 'Please enter your PID number.');
+        return;
+      }
+
+      // Handle water bill related messages
+      if (text === '2' || text === 'water' || text === 'water bill' || text.includes('water')) {
+        await sendWhatsAppMessage(from, 'Please enter your Water Billing ID.');
+        return;
+      }
+
+      // Handle PID number format (assuming PID is numeric and 6-10 digits)
+      if (/^\d{6,10}$/.test(text)) {
+        await sendWhatsAppMessage(
+          from, 
+          `Thank you! You can pay your property tax by clicking on this link:\nhttps://municipality.com/paytax?userID=${text}`
         );
         return;
-      } catch (error) {
-        console.error('Error sending welcome message:', error);
-        // Fallback to simple text message if interactive message fails
+      }
+
+      // Handle Water ID format (assuming Water ID is alphanumeric and 6-12 characters)
+      if (/^[A-Za-z0-9]{6,12}$/.test(text)) {
         await sendWhatsAppMessage(
           from,
-          `Hi ${userName}, welcome to Electronic City Municipal Services.\n\nAvailable services:\n1. Property Tax Payment - reply with '1'\n2. Water Bill Payment - reply with '2'`
+          `Thank you! You can pay your water bill by clicking on this link:\nhttps://municipality.com/waterbill?userID=${text}`
         );
         return;
       }
-    }
 
-    // Handle property tax related messages
-    if (text === '1' || text === 'property' || text === 'property tax' || text.includes('property')) {
-      await sendWhatsAppMessage(from, 'Please enter your PID number.');
-      return;
-    }
-
-    // Handle water bill related messages
-    if (text === '2' || text === 'water' || text === 'water bill' || text.includes('water')) {
-      await sendWhatsAppMessage(from, 'Please enter your Water Billing ID.');
-      return;
-    }
-
-    // Handle PID number format (assuming PID is numeric and 6-10 digits)
-    if (/^\d{6,10}$/.test(text)) {
-      await sendWhatsAppMessage(
-        from, 
-        `Thank you! You can pay your property tax by clicking on this link:\nhttps://municipality.com/paytax?userID=${text}`
-      );
-      return;
-    }
-
-    // Handle Water ID format (assuming Water ID is alphanumeric and 6-12 characters)
-    if (/^[A-Za-z0-9]{6,12}$/.test(text)) {
+      // If we reach here, we didn't understand the message
       await sendWhatsAppMessage(
         from,
-        `Thank you! You can pay your water bill by clicking on this link:\nhttps://municipality.com/waterbill?userID=${text}`
+        `I'm not sure what you're looking for. Please try one of these options:\n\n1. Say "hi" for a welcome message\n2. Type "1" for Property Tax Payment\n3. Type "2" for Water Bill Payment`
       );
-      return;
-    }
-
-    // If we reach here, we didn't understand the message
-    await sendWhatsAppMessage(
-      from,
-      `I'm not sure what you're looking for. Please try one of these options:\n\n1. Say "hi" for a welcome message\n2. Type "1" for Property Tax Payment\n3. Type "2" for Water Bill Payment`
-    );
-  } else if (message.type === 'interactive') {
-    // Handle interactive responses
-    const interactive = message.interactive;
-    if (interactive.type === 'list_reply') {
-      if (interactive.list_reply.id === 'property_tax') {
-        await sendWhatsAppMessage(from, 'Please enter your PID number.');
-      } else if (interactive.list_reply.id === 'water_bill') {
-        await sendWhatsAppMessage(from, 'Please enter your Water Billing ID.');
+    } else if (message.type === 'interactive') {
+      // Handle interactive responses
+      const interactive = message.interactive;
+      if (interactive.type === 'list_reply') {
+        if (interactive.list_reply.id === 'property_tax') {
+          await sendWhatsAppMessage(from, 'Please enter your PID number.');
+        } else if (interactive.list_reply.id === 'water_bill') {
+          await sendWhatsAppMessage(from, 'Please enter your Water Billing ID.');
+        }
       }
+    }
+  } catch (error) {
+    console.error('Error in processIncomingMessage:', error);
+    try {
+      await sendWhatsAppMessage(
+        from,
+        'Sorry, I encountered an error processing your message. Please try again.'
+      );
+    } catch (fallbackError) {
+      console.error('Error sending error message:', fallbackError);
     }
   }
 }
