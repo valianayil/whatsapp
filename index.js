@@ -6,7 +6,8 @@ const app = express();
 const port = process.env.PORT || 3000;
 const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const API_VERSION = process.env.API_VERSION || 'v22.0';
+const API_VERSION = process.env.API_VERSION || 'v16.0';
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'electronic_city_municipal_services';
 
 // Middleware to parse JSON bodies
 app.use(express.json());
@@ -386,6 +387,71 @@ app.get('/debug-test', async (req, res) => {
   }
 });
 
+// Add a test route to check API connectivity
+app.get('/test-api', async (req, res) => {
+  console.log('Testing WhatsApp API connection...');
+  
+  try {
+    // First, try to get basic metadata
+    console.log('Checking API connectivity...');
+    const metaResponse = await axios({
+      method: 'GET',
+      url: `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}`,
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 5000
+    });
+    
+    const phoneData = metaResponse.data;
+    
+    // If the query parameter 'to' is provided, try sending a test message
+    let messageResult = { sent: false };
+    if (req.query.to) {
+      const testPhone = req.query.to;
+      console.log(`Trying to send test message to ${testPhone}...`);
+      
+      // Attempt to send a message
+      const success = await sendTextMessage(
+        testPhone,
+        'This is a test message from the WhatsApp Municipal Services Bot.'
+      );
+      
+      messageResult = { 
+        sent: success,
+        to: testPhone
+      };
+    }
+    
+    // Return diagnostic information
+    res.json({
+      api_status: 'connected',
+      api_version: API_VERSION,
+      phone_number_id: PHONE_NUMBER_ID,
+      display_phone_number: phoneData.display_phone_number || 'unknown',
+      phone_status: phoneData.status || 'unknown',
+      token_length: WHATSAPP_API_KEY?.length || 0,
+      test_message: messageResult,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('API test failed:', error);
+    
+    // Return error information
+    res.status(500).json({
+      api_status: 'error',
+      error_type: error.response ? 'API error' : error.code || 'unknown',
+      status_code: error.response ? error.response.status : null,
+      error_message: error.response ? error.response.data : error.message,
+      api_version: API_VERSION,
+      phone_number_id: PHONE_NUMBER_ID,
+      token_length: WHATSAPP_API_KEY?.length || 0,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Webhook handler for incoming messages
 app.post('/webhook', async (req, res) => {
   // IMPORTANT: Send HTTP response immediately to acknowledge receipt
@@ -501,79 +567,105 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Function to send text messages
+// Add retry logic for API calls
+const MAX_RETRIES = 2;
+const RETRY_DELAY = 1000; // ms
+
+// Function to send text messages with retry logic
 async function sendTextMessage(to, message) {
   console.log(`Sending message to ${to}: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
   
-  try {
-    // Make sure phone number is in correct format
-    const formattedNumber = to.startsWith('+') ? to.substring(1) : to;
-    
-    // Construct the API URL with proper format
-    const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
-    
-    // Log connection details
-    console.log(`WhatsApp API: Using URL ${url}`);
-    console.log(`WhatsApp API: Using Phone Number ID ${PHONE_NUMBER_ID}`);
-    console.log(`WhatsApp API: Using token length ${WHATSAPP_API_KEY?.length || 0}`);
-    
-    // Construct the request payload
-    const data = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: formattedNumber,
-      type: 'text',
-      text: { body: message }
-    };
-    
-    // Send the message with increased timeout
-    const response = await axios({
-      method: 'POST',
-      url: url,
-      headers: {
-        'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      data: data,
-      timeout: 8000 // 8 second timeout
-    });
-    
-    // Log success response
-    console.log(`✅ Message sent successfully to ${to}`);
-    console.log(`Response: ${JSON.stringify(response.data, null, 2)}`);
-    return true;
-  } catch (error) {
-    // Handle specific error cases
-    console.error(`❌ Failed to send message to ${to}:`);
-    
-    if (error.response) {
-      // The API responded with an error
-      console.error(`Status: ${error.response.status}`);
-      console.error(`Error: ${JSON.stringify(error.response.data, null, 2)}`);
-      
-      // Common error types and advice
-      const errorCode = error.response.data?.error?.code;
-      const errorMessage = error.response.data?.error?.message || '';
-      
-      if (errorCode === 100) {
-        console.error('ERROR: Invalid parameter - Check phone number and Phone Number ID');
-      } else if (errorCode === 190) {
-        console.error('ERROR: Authentication failed - Token is invalid or expired');
-      } else if (errorCode === 10) {
-        console.error('ERROR: Permission denied - Token does not have required permissions');
-      } else if (errorMessage.includes('rate limit')) {
-        console.error('ERROR: Rate limit hit - Too many messages too quickly');
-      }
-    } else if (error.code === 'ECONNABORTED') {
-      console.error('ERROR: Request timed out - Check your internet connection');
-    } else if (error.code === 'ENOTFOUND') {
-      console.error('ERROR: Cannot connect to API - Check your internet connection');
-    } else {
-      console.error(`Error: ${error.message}`);
+  // Make sure phone number is in correct format
+  const formattedNumber = to.startsWith('+') ? to.substring(1) : to;
+  
+  // Prepare the message payload once
+  const data = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: formattedNumber,
+    type: 'text',
+    text: { body: message }
+  };
+  
+  // Construct the API URL with proper format
+  const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
+  
+  // Log connection details
+  console.log(`WhatsApp API: Using URL ${url}`);
+  console.log(`WhatsApp API: Using Phone Number ID ${PHONE_NUMBER_ID}`);
+  console.log(`WhatsApp API: Using token length ${WHATSAPP_API_KEY?.length || 0}`);
+  
+  // Implement retry logic
+  let lastError = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      console.log(`Retry attempt ${attempt}/${MAX_RETRIES} for sending to ${to}...`);
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
     }
     
-    return false;
+    try {
+      // Send the message with reduced timeout (faster response but may fail more often)
+      const response = await axios({
+        method: 'POST',
+        url: url,
+        headers: {
+          'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        data: data,
+        timeout: 5000 // 5 second timeout, shorter to fail faster
+      });
+      
+      // Log success response
+      console.log(`✅ Message sent successfully to ${to}`);
+      console.log(`Response: ${JSON.stringify(response.data, null, 2)}`);
+      return true;
+    } catch (error) {
+      lastError = error;
+      
+      // Only show detailed error on last retry
+      if (attempt === MAX_RETRIES) {
+        // Handle specific error cases
+        console.error(`❌ Failed to send message to ${to}:`);
+        
+        if (error.response) {
+          // The API responded with an error
+          console.error(`Status: ${error.response.status}`);
+          console.error(`Error: ${JSON.stringify(error.response.data, null, 2)}`);
+          
+          // Common error types and advice
+          const errorCode = error.response.data?.error?.code;
+          const errorMessage = error.response.data?.error?.message || '';
+          
+          if (errorCode === 100) {
+            console.error('ERROR: Invalid parameter - Check phone number and Phone Number ID');
+          } else if (errorCode === 190) {
+            console.error('ERROR: Authentication failed - Token is invalid or expired');
+          } else if (errorCode === 10) {
+            console.error('ERROR: Permission denied - Token does not have required permissions');
+          } else if (errorMessage.includes('rate limit')) {
+            console.error('ERROR: Rate limit hit - Too many messages too quickly');
+          }
+        } else if (error.code === 'ECONNABORTED') {
+          console.error('ERROR: Request timed out - Check your internet connection');
+        } else if (error.code === 'ENOTFOUND') {
+          console.error('ERROR: Cannot connect to API - Check your internet connection');
+        } else {
+          console.error(`Error: ${error.message}`);
+        }
+      } else {
+        // Simple log for retries
+        console.log(`Attempt ${attempt+1} failed: ${error.message}`);
+      }
+      
+      // Continue to next retry
+      continue;
+    }
   }
+  
+  // If we got here, all retries failed
+  return false;
 }
 
 // Start the server
