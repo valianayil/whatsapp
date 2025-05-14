@@ -386,64 +386,112 @@ app.get('/debug-test', async (req, res) => {
   }
 });
 
-// Webhook for incoming messages
+// Webhook handler for incoming messages
 app.post('/webhook', async (req, res) => {
+  // IMPORTANT: Send HTTP response immediately to acknowledge receipt
+  res.status(200).send('EVENT_RECEIVED');
+  
   try {
-    // Debug logging for environment variables
-    console.log('============ DEBUG INFO ============');
-    console.log('API Version:', process.env.API_VERSION);
-    console.log('Phone Number ID:', process.env.PHONE_NUMBER_ID);
-    console.log('API Key Length:', process.env.WHATSAPP_API_KEY ? process.env.WHATSAPP_API_KEY.length : 'not set');
-    console.log('Verify Token:', process.env.VERIFY_TOKEN);
-    console.log('==================================');
-
-    // Log all incoming webhook requests
-    console.log('============ WEBHOOK RECEIVED ============');
-    console.log('Headers:', JSON.stringify(req.headers, null, 2));
-    console.log('Body:', JSON.stringify(req.body, null, 2));
-    console.log('==========================================');
+    // Log full request for debugging
+    console.log(`Webhook received: ${JSON.stringify(req.body, null, 2)}`);
     
-    // Immediately respond to the webhook to avoid timeouts
-    res.status(200).send('EVENT_RECEIVED');
-
-    // Check if this is a WhatsApp message
-    if (req.body.object === 'whatsapp_business_account') {
-      if (req.body.entry && req.body.entry.length > 0) {
-        const entry = req.body.entry[0];
+    // Validate webhook data
+    if (!req.body.object || req.body.object !== 'whatsapp_business_account') {
+      console.log('Invalid webhook data - not a WhatsApp Business Account message');
+      return;
+    }
+    
+    // Extract entries
+    const entries = req.body.entry || [];
+    if (entries.length === 0) {
+      console.log('No entries found in webhook data');
+      return;
+    }
+    
+    // Process all changes
+    for (const entry of entries) {
+      const changes = entry.changes || [];
+      
+      for (const change of changes) {
+        // Skip status updates (delivery receipts, etc.)
+        if (change.value.statuses) {
+          console.log('Skipping status update message');
+          continue;
+        }
         
-        if (entry.changes && entry.changes.length > 0) {
-          const change = entry.changes[0];
-          console.log('Webhook change value:', JSON.stringify(change.value, null, 2));
+        // Process actual messages
+        const messages = change.value.messages || [];
+        if (messages.length === 0) {
+          console.log('No messages found in this change');
+          continue;
+        }
+        
+        // Process each message
+        for (const message of messages) {
+          // Ensure we have all required data
+          if (!message.from || !message.type) {
+            console.log('Message missing required data:', message);
+            continue;
+          }
           
-          // Only process if this is a new message, not a status update
-          if (change.field === 'messages' && 
-              change.value && 
-              change.value.messages && 
-              change.value.messages.length > 0) {
+          const userPhone = message.from;
+          const userName = change.value.contacts?.[0]?.profile?.name || 'there';
+          
+          console.log(`Processing message from ${userName} (${userPhone}): ${message.type}`);
+          
+          // Track message timestamp to avoid duplicate processing
+          const messageTimestamp = message.timestamp;
+          const messageId = message.id;
+          console.log(`Message details: ID=${messageId}, timestamp=${messageTimestamp}`);
+          
+          // Process text messages
+          if (message.type === 'text' && message.text && message.text.body) {
+            const text = message.text.body.toLowerCase().trim();
+            console.log(`Text message content: "${text}"`);
             
-            const message = change.value.messages[0];
-            
-            // Skip if this is a status message
-            if (message.type === 'status') {
-              console.log('Skipping status message');
-              return;
+            // Process immediately
+            try {
+              // Handle greetings (hi, hello)
+              if (text === 'hi' || text === 'hello' || text === 'hey') {
+                await sendTextMessage(
+                  userPhone, 
+                  `Hi ${userName}, welcome to Municipal Services! I can help you with Property Tax or Water Bill payments. Which service do you need today? Reply with "property" or "water".`
+                );
+              }
+              // Handle property tax requests
+              else if (text.includes('property') || text === '1') {
+                await sendTextMessage(userPhone, 'Please enter your Property ID number:');
+              }
+              // Handle water bill requests
+              else if (text.includes('water') || text === '2') {
+                await sendTextMessage(userPhone, 'Please enter your Water Consumer Number:');
+              }
+              // Handle property ID input (numeric 6-10 digits)
+              else if (/^\d{6,10}$/.test(text)) {
+                await sendTextMessage(
+                  userPhone,
+                  `Thank you! Your Property Tax details:\nProperty ID: ${text}\nAmount Due: ₹5,250\n\nTo pay, visit: https://municipality.gov/pay-property/${text}`
+                );
+              }
+              // Handle water consumer ID input (alphanumeric 6-12 chars)
+              else if (/^[A-Za-z0-9]{6,12}$/.test(text)) {
+                await sendTextMessage(
+                  userPhone,
+                  `Thank you! Your Water Bill details:\nConsumer No: ${text}\nAmount Due: ₹750\n\nTo pay, visit: https://municipality.gov/pay-water/${text}`
+                );
+              }
+              // Default response for unrecognized messages
+              else {
+                await sendTextMessage(
+                  userPhone,
+                  'I didn\'t understand. Please say "hi" to start over, or type "property" or "water" for specific services.'
+                );
+              }
+            } catch (messageError) {
+              console.error(`Error processing message from ${userPhone}:`, messageError);
             }
-
-            const from = message.from; // User's phone number
-            
-            // Extract user name from contacts if available
-            let userName = 'there';
-            if (change.value.contacts && change.value.contacts.length > 0) {
-              userName = change.value.contacts[0].profile.name || 'there';
-            }
-
-            console.log(`Processing message from ${from} (${userName}):`, JSON.stringify(message, null, 2));
-
-            // Process message based on type and user state
-            await processIncomingMessage(message, from, userName);
-            console.log(`Response sent to ${from}`);
           } else {
-            console.log('Skipping non-message change:', change.field);
+            console.log(`Skipping unsupported message type: ${message.type}`);
           }
         }
       }
@@ -453,110 +501,78 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Process incoming messages
-async function processIncomingMessage(message, from, userName) {
-  console.log(`Processing message from ${from}, userName: ${userName}`);
-
+// Function to send text messages
+async function sendTextMessage(to, message) {
+  console.log(`Sending message to ${to}: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
+  
   try {
-    // Handle messages based on type
-    if (message.type === 'text') {
-      // Handle text messages
-      const text = message.text.body.toLowerCase().trim();
-      console.log(`Received text message: "${text}" from ${from}`);
-
-      // Always process greetings immediately
-      if (text === 'hi' || text === 'hello' || text === 'hey' || text === 'hola') {
-        console.log(`Sending welcome message to ${from} with name ${userName}`);
-        try {
-          // First try sending a simple text message to test API connection
-          await sendWhatsAppMessage(
-            from,
-            `Hi ${userName}, welcome to Electronic City Municipal Services.`
-          );
-          
-          // If text message succeeds, try sending the interactive list
-          await sendInteractiveListMessage(
-            from,
-            'Electronic City Municipal Services',
-            `Please select one of our services:`,
-            'View Services',
-            [
-              {
-                title: 'Municipal Services',
-                rows: [
-                  { id: 'property_tax', title: 'Pay Property tax', description: 'Pay your property tax online' },
-                  { id: 'water_bill', title: 'Pay Water charges', description: 'Pay your water bill online' }
-                ]
-              }
-            ]
-          );
-        } catch (error) {
-          console.error('Error in greeting flow:', error);
-          // If interactive message fails, send fallback text message
-          await sendWhatsAppMessage(
-            from,
-            `Hi ${userName}, welcome to Electronic City Municipal Services.\n\nAvailable services:\n1. Property Tax Payment - reply with '1'\n2. Water Bill Payment - reply with '2'`
-          );
-        }
-        return;
-      }
-
-      // Handle property tax related messages
-      if (text === '1' || text === 'property' || text === 'property tax' || text.includes('property')) {
-        await sendWhatsAppMessage(from, 'Please enter your PID number.');
-        return;
-      }
-
-      // Handle water bill related messages
-      if (text === '2' || text === 'water' || text === 'water bill' || text.includes('water')) {
-        await sendWhatsAppMessage(from, 'Please enter your Water Billing ID.');
-        return;
-      }
-
-      // Handle PID number format (assuming PID is numeric and 6-10 digits)
-      if (/^\d{6,10}$/.test(text)) {
-        await sendWhatsAppMessage(
-          from, 
-          `Thank you! You can pay your property tax by clicking on this link:\nhttps://municipality.com/paytax?userID=${text}`
-        );
-        return;
-      }
-
-      // Handle Water ID format (assuming Water ID is alphanumeric and 6-12 characters)
-      if (/^[A-Za-z0-9]{6,12}$/.test(text)) {
-        await sendWhatsAppMessage(
-          from,
-          `Thank you! You can pay your water bill by clicking on this link:\nhttps://municipality.com/waterbill?userID=${text}`
-        );
-        return;
-      }
-
-      // If we reach here, we didn't understand the message
-      await sendWhatsAppMessage(
-        from,
-        `I'm not sure what you're looking for. Please try one of these options:\n\n1. Say "hi" for a welcome message\n2. Type "1" for Property Tax Payment\n3. Type "2" for Water Bill Payment`
-      );
-    } else if (message.type === 'interactive') {
-      // Handle interactive responses
-      const interactive = message.interactive;
-      if (interactive.type === 'list_reply') {
-        if (interactive.list_reply.id === 'property_tax') {
-          await sendWhatsAppMessage(from, 'Please enter your PID number.');
-        } else if (interactive.list_reply.id === 'water_bill') {
-          await sendWhatsAppMessage(from, 'Please enter your Water Billing ID.');
-        }
-      }
-    }
+    // Make sure phone number is in correct format
+    const formattedNumber = to.startsWith('+') ? to.substring(1) : to;
+    
+    // Construct the API URL with proper format
+    const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
+    
+    // Log connection details
+    console.log(`WhatsApp API: Using URL ${url}`);
+    console.log(`WhatsApp API: Using Phone Number ID ${PHONE_NUMBER_ID}`);
+    console.log(`WhatsApp API: Using token length ${WHATSAPP_API_KEY?.length || 0}`);
+    
+    // Construct the request payload
+    const data = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: formattedNumber,
+      type: 'text',
+      text: { body: message }
+    };
+    
+    // Send the message with increased timeout
+    const response = await axios({
+      method: 'POST',
+      url: url,
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      data: data,
+      timeout: 8000 // 8 second timeout
+    });
+    
+    // Log success response
+    console.log(`✅ Message sent successfully to ${to}`);
+    console.log(`Response: ${JSON.stringify(response.data, null, 2)}`);
+    return true;
   } catch (error) {
-    console.error('Error in processIncomingMessage:', error);
-    try {
-      await sendWhatsAppMessage(
-        from,
-        'Sorry, I encountered an error processing your message. Please try again.'
-      );
-    } catch (fallbackError) {
-      console.error('Error sending error message:', fallbackError);
+    // Handle specific error cases
+    console.error(`❌ Failed to send message to ${to}:`);
+    
+    if (error.response) {
+      // The API responded with an error
+      console.error(`Status: ${error.response.status}`);
+      console.error(`Error: ${JSON.stringify(error.response.data, null, 2)}`);
+      
+      // Common error types and advice
+      const errorCode = error.response.data?.error?.code;
+      const errorMessage = error.response.data?.error?.message || '';
+      
+      if (errorCode === 100) {
+        console.error('ERROR: Invalid parameter - Check phone number and Phone Number ID');
+      } else if (errorCode === 190) {
+        console.error('ERROR: Authentication failed - Token is invalid or expired');
+      } else if (errorCode === 10) {
+        console.error('ERROR: Permission denied - Token does not have required permissions');
+      } else if (errorMessage.includes('rate limit')) {
+        console.error('ERROR: Rate limit hit - Too many messages too quickly');
+      }
+    } else if (error.code === 'ECONNABORTED') {
+      console.error('ERROR: Request timed out - Check your internet connection');
+    } else if (error.code === 'ENOTFOUND') {
+      console.error('ERROR: Cannot connect to API - Check your internet connection');
+    } else {
+      console.error(`Error: ${error.message}`);
     }
+    
+    return false;
   }
 }
 
